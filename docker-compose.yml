@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  baileys-gateway:
+    build: .
+    container_name: baileys_whatsapp_gateway
+    restart: unless-stopped
+    ports:
+      - "3080:3000"
+    environment:
+      - TZ=Asia/Jakarta
+      - WEBHOOK_URL_1=${WEBHOOK_URL_1:-}
+      - WEBHOOK_URL_2=${WEBHOOK_URL_2:-}
+      - WEBHOOK_URL_3=${WEBHOOK_URL_3:-}
+      - MEDIA_PATH=/app/media
+      - PORT=3000
+    volumes:
+      - ./sessions:/app/sessions
+      - ./media:/app/media
+      - ./src:/app/src
+    networks:
+      - baileys_network
+
+networks:
+  baileys_network:
+    driver: bridge
