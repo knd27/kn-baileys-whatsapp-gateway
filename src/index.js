@@ -64,11 +64,102 @@ async function sendToAllWebhooks(data) {
     await Promise.allSettled(promises);
 }
 
+// ----------------------------------------------------------------------
+// Tambahkan helper ini somewhere di atas (bersama fungsi lain)
+function detectFileTypeFromBuffer(buffer) {
+    if (!buffer || buffer.length < 12) return null;
+
+    const hex = (b, len = 8) => buffer.slice(0, len).toString('hex').toLowerCase();
+    const startsWith = (sig) => buffer.slice(0, sig.length).equals(Buffer.from(sig));
+
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+        return { ext: 'jpg', mime: 'image/jpeg' };
+    }
+
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (startsWith([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A])) {
+        return { ext: 'png', mime: 'image/png' };
+    }
+
+    // GIF: 47 49 46 38
+    if (startsWith([0x47,0x49,0x46,0x38])) {
+        return { ext: 'gif', mime: 'image/gif' };
+    }
+
+    // PDF: %PDF
+    if (startsWith([0x25,0x50,0x44,0x46])) {
+        return { ext: 'pdf', mime: 'application/pdf' };
+    }
+
+    // WEBP: RIFF....WEBP (bytes 0-3 = 'RIFF' and 8-11 = 'WEBP')
+    if (buffer.slice(0,4).toString() === 'RIFF' && buffer.slice(8,12).toString() === 'WEBP') {
+        return { ext: 'webp', mime: 'image/webp' };
+    }
+
+    // MKV (Matroska) EBML header: 1A 45 DF A3
+    if (startsWith([0x1A,0x45,0xDF,0xA3])) {
+        return { ext: 'mkv', mime: 'video/x-matroska' };
+    }
+
+    // MP4 / MOV / QT family: 'ftyp' at offset 4
+    try {
+        if (buffer.length > 12 && buffer.slice(4, 8).toString() === 'ftyp') {
+            // more specific detection could be added but mp4 is safe default
+            return { ext: 'mp4', mime: 'video/mp4' };
+        }
+    } catch (e) {}
+
+    // AVI: 'RIFF' + 'AVI ' at offset 8
+    if (buffer.slice(0,4).toString() === 'RIFF' && buffer.slice(8,12).toString() === 'AVI ') {
+        return { ext: 'avi', mime: 'video/x-msvideo' };
+    }
+
+    // MP3: ID3 or frame sync 0xFF 0xFB/0xF3/0xF2
+    if (buffer.slice(0,3).toString() === 'ID3' || (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0)) {
+        return { ext: 'mp3', mime: 'audio/mpeg' };
+    }
+
+    // OGG: 'OggS'
+    if (buffer.slice(0,4).toString() === 'OggS') {
+        return { ext: 'ogg', mime: 'audio/ogg' };
+    }
+
+    // ZIP / Office Open XML (docx, xlsx, pptx): 50 4B 03 04
+    if (startsWith([0x50,0x4B,0x03,0x04])) {
+        return { ext: 'zip', mime: 'application/zip' };
+    }
+
+    // RAR: 52 61 72 21 1A 07 00
+    if (buffer.slice(0,7).equals(Buffer.from([0x52,0x61,0x72,0x21,0x1A,0x07,0x00]))) {
+        return { ext: 'rar', mime: 'application/x-rar-compressed' };
+    }
+
+    // BMP: 42 4D
+    if (buffer[0] === 0x42 && buffer[1] === 0x4D) {
+        return { ext: 'bmp', mime: 'image/bmp' };
+    }
+
+    // ICO: 00 00 01 00
+    if (buffer.slice(0,4).equals(Buffer.from([0x00,0x00,0x01,0x00]))) {
+        return { ext: 'ico', mime: 'image/x-icon' };
+    }
+
+    // TIFF: II* or MM*
+    if ((buffer[0] === 0x49 && buffer[1] === 0x49 && buffer[2] === 0x2A && buffer[3] === 0x00) ||
+        (buffer[0] === 0x4D && buffer[1] === 0x4D && buffer[2] === 0x00 && buffer[3] === 0x2A)) {
+        return { ext: 'tiff', mime: 'image/tiff' };
+    }
+
+    // Default: unable to detect
+    return null;
+}
+
 async function downloadMedia(message) {
     try {
         const messageType = Object.keys(message.message || {})[0];
         const msg = message.message[messageType];
-        
+
         // Download buffer dari media
         const buffer = await downloadMediaMessage(
             message,
@@ -79,44 +170,81 @@ async function downloadMedia(message) {
                 reuploadRequest: sock.updateMediaMessage
             }
         );
-        
+
         // Ambil nomor pengirim
         const sender = message.key.remoteJid.split('@')[0];
         const senderFolder = path.join(MEDIA_PATH, sender);
-        
+
         // Buat folder untuk pengirim jika belum ada
         if (!fs.existsSync(senderFolder)) {
             fs.mkdirSync(senderFolder, { recursive: true });
         }
-        
+
         const timestamp = moment().format('YYYYMMDDHHmmss');
         const random = Math.random().toString(36).substring(7);
-        
+
+        // Default ext dari mimetype (jika ada)
         let ext = 'bin';
+        let detectedMime = null;
         const mimetype = msg?.mimetype;
-        
+
         if (mimetype) {
             const mimeExt = mimetype.split('/')[1]?.split(';')[0];
             if (mimeExt) ext = mimeExt;
         }
-        
+
+        // Jika ext masih 'bin' atau mimetype tidak ada, coba deteksi magic bytes
+        if (ext === 'bin' || !mimetype) {
+            const detected = detectFileTypeFromBuffer(buffer);
+            if (detected) {
+                ext = detected.ext || ext;
+                detectedMime = detected.mime || null;
+            }
+        }
+
         const filename = `${timestamp}-${random}.${ext}`;
         const filepath = path.join(senderFolder, filename);
-        
+
+        // Tulis file ke disk
         fs.writeFileSync(filepath, buffer);
-        
+
+        // Jika kita mendeteksi mimetype yang berbeda setelah menyimpan dengan .bin,
+        // dan nama file berakhiran .bin atau ext berbeda, kita rename file ke ekstensi yang benar.
+        // (jika file sudah benar ext, ini akan dilewati)
+        if (detectedMime && ext && filepath.endsWith('.bin')) {
+            const newFilename = `${timestamp}-${random}.${ext}`;
+            const newPath = path.join(senderFolder, newFilename);
+            try {
+                fs.renameSync(filepath, newPath);
+            } catch (err) {
+                console.warn('Gagal rename file berdasarkan magic bytes:', err.message);
+            }
+            return {
+                filename: newFilename,
+                filepath: newPath,
+                relativePath: `${sender}/${newFilename}`,
+                size: buffer.length,
+                mimetype: detectedMime
+            };
+        }
+
+        // Jika mimetype tidak ada tetapi kita menemukan detectedMime earlier and ext was changed before writing,
+        // ensure returned mimetype is included.
+        const returnMime = detectedMime || mimetype || null;
+
         return {
             filename,
             filepath,
             relativePath: `${sender}/${filename}`,
             size: buffer.length,
-            mimetype
+            mimetype: returnMime
         };
     } catch (error) {
         console.error('Error downloading media:', error.message);
         return null;
     }
 }
+// ----------------------------------------------------------------------
 
 function formatMessage(m) {
     const messageType = Object.keys(m.message || {})[0];
