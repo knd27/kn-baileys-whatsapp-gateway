@@ -297,14 +297,33 @@ function getSenderNumber(m) {
 // ---------------------------------------------------------
 // Format pesan untuk dikirim ke webhook
 // ---------------------------------------------------------
+function normalizeJid(jid) {
+    if (!jid) return null;
+    // jika ada koma (multiple recipients) ambil yang pertama
+    const j = jid.split(',')[0];
+    // pastikan string
+    return String(j);
+}
+
+function extractNumberFromJid(jid) {
+    if (!jid) return null;
+    const parts = jid.split('@')[0];
+    // some JIDs may include device ids like 12345-67890, ignore those
+    if (parts.includes('-')) return null;
+    return parts;
+}
+
 function formatMessage(m) {
     const senderNumber = getSenderNumber(m);
     const messageType = Object.keys(m.message || {})[0];
+    const isStatus = normalizeJid(m.key.remoteJid) === 'status@broadcast';
 
     let data = {
         messageId: m.key.id,
         from: senderNumber,   // <--- nomor pengirim (penting untuk balas)
         fromJid: m.key.participant || m.key.remoteJid, // JID asli
+	pushName: m.pushName || null, 
+	type: isStatus ? 'status' : 'message',
         isGroup: m.key.remoteJid.endsWith("@g.us"),
         timestamp: m.messageTimestamp ? 
             moment.unix(m.messageTimestamp).format("YYYY-MM-DD HH:mm:ss") :
