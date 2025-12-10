@@ -4,3 +4,4 @@ media/
 .env
 *.log
 .DS_Store
+.note

@@ -245,65 +245,152 @@ async function downloadMedia(message) {
     }
 }
 // ----------------------------------------------------------------------
+// ---------------------------------------------------------
+// Ambil nomor pengirim yang valid untuk balas pesan
+// ---------------------------------------------------------
+function extractNumber(jid) {
+    if (!jid) return null;
+    jid = String(jid).split(",")[0];
+    let num = jid.split("@")[0];
+    if (!/^\d+$/.test(num)) return null;
+    return num;
+}
 
+function getSenderNumber(m) {
+    // PRIORITAS 1 — Pengirim asli (terbukti dari debug)
+    if (m.key?.senderPn) {
+        const num = extractNumber(m.key.senderPn);
+        if (num) return num;
+    }
+
+    // PRIORITAS 2 — pesan grup
+    if (m.key?.participant) {
+        const num = extractNumber(m.key.participant);
+        if (num) return num;
+    }
+
+    // PRIORITAS 3 — remoteJid
+    if (m.key?.remoteJid) {
+        const num = extractNumber(m.key.remoteJid);
+        if (num) return num;
+    }
+
+    // PRIORITAS 4 — fallback tambahan
+    const fields = [
+        m.participant,
+        m.author,
+        m.sender,
+        m.realJid,
+        m.key?.realJid
+    ];
+
+    for (const f of fields) {
+        const num = extractNumber(f);
+        if (num) return num;
+    }
+
+    return null;
+}
+
+
+
+// ---------------------------------------------------------
+// Format pesan untuk dikirim ke webhook
+// ---------------------------------------------------------
 function formatMessage(m) {
+    const senderNumber = getSenderNumber(m);
     const messageType = Object.keys(m.message || {})[0];
-    const isStatus = m.key.remoteJid === 'status@broadcast';
-    
-    const baseData = {
+
+    let data = {
         messageId: m.key.id,
-        from: m.key.remoteJid,
-        fromMe: m.key.fromMe,
-        participant: m.key.participant,
-        timestamp: moment.unix(m.messageTimestamp).format('YYYY-MM-DD HH:mm:ss'),
-        type: isStatus ? 'status' : 'message',
-        messageType: messageType,
-        pushName: m.pushName
+        from: senderNumber,   // <--- nomor pengirim (penting untuk balas)
+        fromJid: m.key.participant || m.key.remoteJid, // JID asli
+        isGroup: m.key.remoteJid.endsWith("@g.us"),
+        timestamp: m.messageTimestamp ? 
+            moment.unix(m.messageTimestamp).format("YYYY-MM-DD HH:mm:ss") :
+            null,
+        messageType: messageType
     };
-    
+
+    console.log("DEBUG FULL MESSAGE:", JSON.stringify(m, null, 2));
+
+
+
+    // ------- Text Message -------
     if (m.message?.conversation) {
-        baseData.text = m.message.conversation;
-    } else if (m.message?.extendedTextMessage) {
-        baseData.text = m.message.extendedTextMessage.text;
-        
-        if (m.message.extendedTextMessage.contextInfo?.quotedMessage) {
-            const quotedMsg = m.message.extendedTextMessage.contextInfo.quotedMessage;
-            baseData.quotedMessage = {
-                messageId: m.message.extendedTextMessage.contextInfo.stanzaId,
-                participant: m.message.extendedTextMessage.contextInfo.participant,
-                text: quotedMsg.conversation || 
-                      quotedMsg.extendedTextMessage?.text || 
-                      quotedMsg.imageMessage?.caption || 
-                      quotedMsg.videoMessage?.caption || 
-                      quotedMsg.documentMessage?.caption || ''
+        data.text = m.message.conversation;
+    }
+
+    // ------- ExtendedText -------
+    else if (m.message?.extendedTextMessage) {
+        data.text = m.message.extendedTextMessage.text;
+
+        // quoted message jika ada
+        const q = m.message.extendedTextMessage.contextInfo;
+        if (q?.quotedMessage) {
+            const qm = q.quotedMessage;
+            data.quotedMessage = {
+                messageId: q.stanzaId,
+                from: q.participant ? q.participant.split("@")[0] : null,
+                text: qm.conversation ||
+                      qm.extendedTextMessage?.text ||
+                      qm.imageMessage?.caption ||
+                      qm.videoMessage?.caption ||
+                      qm.documentMessage?.caption || ""
             };
         }
-    } else if (m.message?.imageMessage) {
-        baseData.caption = m.message.imageMessage.caption;
-        baseData.mediaType = 'image';
-    } else if (m.message?.videoMessage) {
-        baseData.caption = m.message.videoMessage.caption;
-        baseData.mediaType = 'video';
-    } else if (m.message?.documentMessage) {
-        baseData.caption = m.message.documentMessage.caption;
-        baseData.fileName = m.message.documentMessage.fileName;
-        baseData.mediaType = 'document';
-    } else if (m.message?.audioMessage) {
-        baseData.mediaType = 'audio';
-    } else if (m.message?.stickerMessage) {
-        baseData.mediaType = 'sticker';
-    } else if (m.message?.locationMessage) {
-        baseData.location = {
-            latitude: m.message.locationMessage.degreesLatitude,
-            longitude: m.message.locationMessage.degreesLongitude,
-            name: m.message.locationMessage.name,
-            address: m.message.locationMessage.address
-        };
-        baseData.mediaType = 'location';
     }
-    
-    return baseData;
+
+    // ------- Image -------
+    else if (m.message?.imageMessage) {
+        data.mediaType = "image";
+        data.caption = m.message.imageMessage.caption || null;
+    }
+
+    // ------- Video -------
+    else if (m.message?.videoMessage) {
+        data.mediaType = "video";
+        data.caption = m.message.videoMessage.caption || null;
+    }
+
+    // ------- Document -------
+    else if (m.message?.documentMessage) {
+        data.mediaType = "document";
+        data.fileName = m.message.documentMessage.fileName;
+        data.caption = m.message.documentMessage.caption || null;
+    }
+
+    // ------- Audio -------
+    else if (m.message?.audioMessage) {
+        data.mediaType = "audio";
+    }
+
+    // ------- Sticker -------
+    else if (m.message?.stickerMessage) {
+        data.mediaType = "sticker";
+    }
+
+    // ------- Location -------
+    else if (m.message?.locationMessage) {
+        const loc = m.message.locationMessage;
+        data.mediaType = "location";
+        data.location = {
+            latitude: loc.degreesLatitude,
+            longitude: loc.degreesLongitude,
+            name: loc.name || null,
+            address: loc.address || null
+        };
+    }
+
+    return data;
 }
+
+
+
+
+
+
+
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('./sessions');
