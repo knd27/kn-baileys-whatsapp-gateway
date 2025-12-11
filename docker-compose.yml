@@ -1,9 +1,9 @@
-version: '3.8'
+version: "3.8"
 
 services:
   baileys-gateway:
     build: .
-    container_name: baileys_whatsapp_gateway
+    container_name: baileys_byu
     restart: unless-stopped
     ports:
       - "3080:3000"

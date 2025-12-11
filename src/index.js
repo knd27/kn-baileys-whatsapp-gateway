@@ -19,6 +19,8 @@ const WEBHOOK_URL_1 = process.env.WEBHOOK_URL_1;
 const WEBHOOK_URL_2 = process.env.WEBHOOK_URL_2;
 const WEBHOOK_URL_3 = process.env.WEBHOOK_URL_3;
 const MEDIA_PATH = process.env.MEDIA_PATH || '/app/media';
+const SESSION_DIR = './sessions';
+let ME_NUMBER = process.env.ME_NUMBER || null; // nomor akun WhatsApp utama (untuk fromMe handling)
 
 moment.tz.setDefault(TIMEZONE);
 
@@ -257,6 +259,11 @@ function extractNumber(jid) {
 }
 
 function getSenderNumber(m) {
+    // jika fromMe, gunakan nomor akun sendiri
+    if (m.key?.fromMe) {
+        return extractNumber(ME_NUMBER);
+    }
+
     // PRIORITAS 1 — Pengirim asli (terbukti dari debug)
     if (m.key?.senderPn) {
         const num = extractNumber(m.key.senderPn);
@@ -320,10 +327,11 @@ function formatMessage(m) {
 
     let data = {
         messageId: m.key.id,
-        from: senderNumber,   // <--- nomor pengirim (penting untuk balas)
+        fromMe: m.key.fromMe || false,
+        from: m.key.fromMe ? ME_NUMBER : senderNumber,   // <--- nomor pengirim (penting untuk balas) | jika fromMe, gunakan ME_NUMBER
         fromJid: m.key.participant || m.key.remoteJid, // JID asli
-	pushName: m.pushName || null, 
-	type: isStatus ? 'status' : 'message',
+        pushName: m.pushName || null, 
+        type: isStatus ? 'status' : 'message',
         isGroup: m.key.remoteJid.endsWith("@g.us"),
         timestamp: m.messageTimestamp ? 
             moment.unix(m.messageTimestamp).format("YYYY-MM-DD HH:mm:ss") :
@@ -331,13 +339,11 @@ function formatMessage(m) {
         messageType: messageType
     };
 
-    console.log("DEBUG FULL MESSAGE:", JSON.stringify(m, null, 2));
-
-
+    console.log("🔍 DEBUG FULL MESSAGE: ", JSON.stringify(m, null, 2));
 
     // ------- Text Message -------
     if (m.message?.conversation) {
-        data.text = m.message.conversation;
+        data.text = m.message.conversation || "";
     }
 
     // ------- ExtendedText -------
@@ -399,6 +405,7 @@ function formatMessage(m) {
             name: loc.name || null,
             address: loc.address || null
         };
+        data.text = "[share location] \n" + data.location.name + "\n" + data.location.latitude + ", " + data.location.longitude;
     }
 
     return data;
@@ -460,6 +467,8 @@ async function connectToWhatsApp() {
             console.log('✅ Connected to WhatsApp');
             connectionStatus = 'connected';
             qrCodeData = null;
+
+            await getMeInfo(sock, { sessionDir: './sessions', includePic: true });            
             
             await sendToAllWebhooks({
                 status: 'connected',
@@ -491,7 +500,7 @@ async function connectToWhatsApp() {
             
             await sendToAllWebhooks(formattedMessage);
             
-            console.log('📨 Message received:', formattedMessage);
+            console.log('📨 Webhook : Message received:', formattedMessage);
         }
     });
 }
@@ -677,112 +686,6 @@ app.post('/send-loc', async (req, res) => {
     }
 });
 
-app.post('/button', async (req, res) => {
-    try {
-        const { number, text, buttons, footer } = req.body;
-        
-        if (!number || !text || !buttons) {
-            return res.status(400).json({ error: 'Number, text, and buttons are required' });
-        }
-        
-        const jid = number.includes('@s.whatsapp.net') ? number : `${number}@s.whatsapp.net`;
-        
-        // Untuk WhatsApp personal, gunakan list message (menu dropdown)
-        const sections = [{
-            title: 'Pilihan Menu',
-            rows: buttons.map((btn, idx) => ({
-                title: typeof btn === 'string' ? btn : btn.text || btn.title,
-                rowId: `row_${idx}`,
-                description: typeof btn === 'object' ? btn.description || '' : ''
-            }))
-        }];
-        
-        const listMessage = {
-            text: text,
-            footer: footer || '',
-            title: '📋 Menu',
-            buttonText: 'Lihat Pilihan',
-            sections: sections
-        };
-        
-        const sent = await sock.sendMessage(jid, listMessage);
-        
-        res.json({
-            success: true,
-            messageId: sent.key.id,
-            type: 'list',
-            note: 'Button tidak didukung di WhatsApp personal. Menggunakan list message.',
-            timestamp: moment().format('YYYY-MM-DD HH:mm:ss')
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/send-list', async (req, res) => {
-    try {
-        const { number, text, buttonText, sections, footer, title } = req.body;
-        
-        if (!number || !text || !sections) {
-            return res.status(400).json({ error: 'Number, text, and sections are required' });
-        }
-        
-        const jid = number.includes('@s.whatsapp.net') ? number : `${number}@s.whatsapp.net`;
-        
-        const listMessage = {
-            text: text,
-            footer: footer || '',
-            title: title || 'Menu',
-            buttonText: buttonText || 'Pilih',
-            sections: sections
-        };
-        
-        const sent = await sock.sendMessage(jid, listMessage);
-        
-        res.json({
-            success: true,
-            messageId: sent.key.id,
-            timestamp: moment().format('YYYY-MM-DD HH:mm:ss')
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/send-template', async (req, res) => {
-    res.status(400).json({ 
-        error: 'Template buttons hanya tersedia untuk WhatsApp Business API',
-        alternative: 'Gunakan /send-list untuk menu interaktif'
-    });
-});
-
-app.post('/send-copy-code', async (req, res) => {
-    try {
-        const { number, message, code } = req.body;
-        
-        if (!number || !code) {
-            return res.status(400).json({ error: 'Number and code are required' });
-        }
-        
-        const jid = number.includes('@s.whatsapp.net') ? number : `${number}@s.whatsapp.net`;
-        
-        // Kirim code dalam format monospace yang bisa di-copy
-        const fullMessage = message ? `${message}\n\n\`\`\`${code}\`\`\`` : `\`\`\`${code}\`\`\``;
-        
-        const sent = await sock.sendMessage(jid, { 
-            text: fullMessage
-        });
-        
-        res.json({
-            success: true,
-            messageId: sent.key.id,
-            note: 'Copy button tidak didukung di WhatsApp personal. Code dikirim dalam format monospace.',
-            timestamp: moment().format('YYYY-MM-DD HH:mm:ss')
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
 
 app.post('/typing', async (req, res) => {
     try {
@@ -837,6 +740,352 @@ app.get('/profile', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+
+// ------------------------- 11.12.2025----------------
+// Helper: safe extract number/jid
+function normalizeJidInput(q) {
+    if (!q) return null;
+    if (q.includes('@')) return q;
+    if (/^\d+$/.test(q)) return `${q}@s.whatsapp.net`;
+    // accept also g.us or others if provided raw
+    return q;
+}
+
+// Helper: try get profile picture url safely
+async function safeProfilePic(jid) {
+    try {
+        if (!jid) return null;
+        // some Baileys versions expose sock.profilePictureUrl
+        if (typeof sock.profilePictureUrl === 'function') {
+            const url = await sock.profilePictureUrl(jid, 'image');
+            return url || null;
+        }
+        // fallback: some builds provide fetchProfilePicture? try generic
+        if (typeof sock.fetchProfilePicture === 'function') {
+            const url = await sock.fetchProfilePicture(jid);
+            return url || null;
+        }
+    } catch (e) {
+        // not found or blocked / no profile pic
+        return null;
+    }
+    return null;
+}
+
+
+// ------------------------- Helper extractNumber -------------------------
+function extractNumber(jid) {
+    if (!jid) return null;
+    jid = String(jid).split(",")[0];          // jika ada list, ambil pertama
+    let num = jid.split("@")[0];              // ambil bagian sebelum '@'
+    num = num.split(":")[0];                  // hapus device id setelah ':', contoh 628...:36
+    if (!/^\d+$/.test(num)) return null;      // validasi numeric
+    return num;
+}
+
+// ------------------------- safeProfilePic (reusable) -------------------------
+async function safeProfilePic(sockInstance, jid) {
+    if (!jid || !sockInstance) return null;
+    try {
+        if (typeof sockInstance.profilePictureUrl === 'function') {
+            const url = await sockInstance.profilePictureUrl(jid, 'image');
+            return url || null;
+        }
+        if (typeof sockInstance.fetchProfilePicture === 'function') {
+            const url = await sockInstance.fetchProfilePicture(jid);
+            return url || null;
+        }
+    } catch (e) {
+        return null;
+    }
+    return null;
+}
+
+// ------------------------- getMeInfo (reusable) -------------------------
+/**
+ * Mengembalikan info akun yang terhubung ke Baileys secara reusable.
+ * @param {object} sockInstance - instance socket Baileys (sock)
+ * @param {object} options - opsi tambahan:
+ *    - sessionDir: path ke folder sessions (default './sessions')
+ *    - includePic: boolean, apakah memanggil profilePic (default true)
+ * @returns {Promise<object>} { success, jid, number, pushName, name, profilePicUrl, sessionFolder, raw }
+ */
+async function getMeInfo(sockInstance, options = {}) {
+    const SESSION_DIR = options.sessionDir || './sessions';
+    const includePic = options.includePic !== undefined ? options.includePic : true;
+
+    let out = {
+        success: false,
+        jid: null,
+        number: null,
+        pushName: null,
+        name: null,
+        profilePicUrl: null,
+        sessionFolder: null,
+        raw: {}
+    };
+
+    try {
+        // 1) coba dari sock.user (umumnya paling cepat tersedia setelah connected)
+        try {
+            if (sockInstance && sockInstance.user) {
+                const u = sockInstance.user;
+                out.raw.sockUser = u;
+                // beberapa versi punya 'id', beberapa 'jid'
+                out.jid = u.id || u.jid || null;
+                out.name = u.name || u.notify || null;
+                out.pushName = u.name || u.pushName || u.notify || null;
+            }
+        } catch (e) {
+            // ignore
+        }
+
+        // 2) jika belum ditemukan jid, coba dari sessions/*/creds.json
+        if (!out.jid) {
+            try {
+                if (fs.existsSync(SESSION_DIR)) {
+                    const folders = fs.readdirSync(SESSION_DIR).filter(f => fs.statSync(path.join(SESSION_DIR, f)).isDirectory());
+                    for (const f of folders) {
+                        const credPath = path.join(SESSION_DIR, f, 'creds.json');
+                        if (fs.existsSync(credPath)) {
+                            try {
+                                const creds = JSON.parse(fs.readFileSync(credPath, 'utf8'));
+                                if (creds && creds.me) {
+                                    out.jid = creds.me.id || creds.me.jid || null;
+                                    out.name = creds.me.name || creds.me.notify || out.name;
+                                    out.sessionFolder = f;
+                                    out.raw.creds = creds.me;
+                                    break;
+                                }
+                            } catch (e) {
+                                // parse error -> skip
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        // 3) pastikan number di-extract dengan benar (hapus :device)
+        if (out.jid) {
+            out.number = extractNumber(out.jid);
+        }
+
+        // 4) include profile picture (opsional)
+        if (includePic && out.jid) {
+            try {
+                out.profilePicUrl = await safeProfilePic(sockInstance, out.jid);
+            } catch (e) {
+                out.profilePicUrl = null;
+            }
+        }
+
+        // finalisasi
+        out.success = true;
+        ME_NUMBER = out.number || ME_NUMBER;  // update global ME_NUMBER jika perlu
+        return out;
+    } catch (error) {
+        return {
+            success: false,
+            error: error.message,
+            raw: out.raw || {}
+        };
+    }
+}
+
+// ------------------------- REPLACE /me endpoint to use getMeInfo -------------------------
+// GET /me — info akun Baileys saat ini
+app.get('/me', async (req, res) => {
+    try {
+        if (!sock) return res.status(500).json({ success: false, error: 'Socket not initialized' });
+
+        const info = await getMeInfo(sock, { sessionDir: './sessions', includePic: true });
+
+        if (!info.success) {
+            return res.status(500).json({ success: false, error: 'Unable to get account info', details: info });
+        }
+
+        return res.json({
+            success: true,
+            jid: info.jid,
+            number: info.number,
+            pushName: info.pushName || info.name || null,
+            profilePicUrl: info.profilePicUrl || null,
+            sessionFolder: info.sessionFolder || null,
+            timestamp: moment().format('YYYY-MM-DD HH:mm:ss')
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+
+
+
+// GET /contact-info?jid=628123... atau ?jid=628123@s.whatsapp.net
+app.get('/contact-info', async (req, res) => {
+    try {
+        const q = req.query.jid;
+        if (!q) return res.status(400).json({ success: false, error: 'Query param "jid" diperlukan | jid=628123... atau ?jid=628123@s.whatsapp.net' });
+
+        const jid = normalizeJidInput(q);
+
+        const result = {
+            jid,
+            number: jid ? jid.split('@')[0] : null,
+            pushName: null,
+            isOnWhatsApp: null,
+            profilePicUrl: null,
+            // raw fallback data
+            fromContacts: null
+        };
+
+        // 1) coba lihat di cache contacts local (sock.contacts)
+        try {
+            if (sock && sock.contacts && sock.contacts[jid]) {
+                const c = sock.contacts[jid];
+                result.pushName = c.name || c.notify || c.subject || null;
+                result.fromContacts = true;
+            } else {
+                result.fromContacts = false;
+            }
+        } catch (e) {
+            result.fromContacts = null;
+        }
+
+        // 2) cek apakah onWhatsApp (beberapa versi punya method onWhatsApp)
+        try {
+            if (typeof sock.onWhatsApp === 'function') {
+                const arr = await sock.onWhatsApp([jid]);
+                // arr example: [{ exists: true, jid: '628...', isBusiness: false, ... }]
+                if (Array.isArray(arr) && arr.length > 0) {
+                    result.isOnWhatsApp = !!arr[0]?.exists;
+                }
+            }
+        } catch (e) {
+            // ignore
+        }
+
+        // 3) profile picture
+        try {
+            const p = await safeProfilePic(jid);
+            result.profilePicUrl = p;
+        } catch (e) {
+            result.profilePicUrl = null;
+        }
+
+        // 4) jika pushName masih null, coba ambil dari presence in contacts map fields
+        try {
+            if (!result.pushName && sock && sock.contacts) {
+                const c = sock.contacts[jid];
+                if (c) result.pushName = c.pushname || c.notify || c.name || null;
+            }
+        } catch (e) {}
+
+        return res.json({
+            success: true,
+            data: result,
+            timestamp: moment().format('YYYY-MM-DD HH:mm:ss')
+        });
+
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+
+
+// GET /contacts - list semua kontak dari cache sock.contacts
+// Query params:
+//  - q (string): search keyword (jid, number, name)
+//  - limit (int): max hasil (default 100)
+//  - offset (int): offset untuk paging (default 0)
+//  - withPic (1|0): jika 1 maka include profilePicUrl (akan memanggil safeProfilePic untuk setiap kontak)
+app.get('/contacts', async (req, res) => {
+    try {
+        if (!sock) return res.status(500).json({ success: false, error: 'Socket not initialized' });
+
+        const q = (req.query.q || '').toString().trim().toLowerCase();
+        const limit = Math.max(1, Math.min(1000, parseInt(req.query.limit || '100', 10)));
+        const offset = Math.max(0, parseInt(req.query.offset || '0', 10));
+        const withPic = req.query.withPic === '1' || req.query.withPic === 'true';
+
+        const contactsObj = sock.contacts || {};
+        const jids = Object.keys(contactsObj);
+
+        // Map kontak -> array of simplified objects
+        let list = jids.map(jid => {
+            const c = contactsObj[jid] || {};
+            const number = jid.split('@')[0];
+            return {
+                jid,
+                number,
+                name: c.name || c.notify || c.pushname || c.subject || null,
+                short: c.short || null,
+                isBusiness: c.isBusiness || false,
+                isEnterprise: c.isEnterprise || false,
+                // raw contact cache for debugging (optional)
+                _raw: undefined
+            };
+        });
+
+        // Optional search filter
+        if (q) {
+            list = list.filter(item => {
+                return (item.jid && item.jid.toLowerCase().includes(q)) ||
+                       (item.number && item.number.includes(q)) ||
+                       (item.name && item.name.toLowerCase().includes(q));
+            });
+        }
+
+        const total = list.length;
+
+        // Apply offset + limit
+        list = list.slice(offset, offset + limit);
+
+        // Optionally fetch profilePicUrl for each contact (careful: heavy)
+        if (withPic) {
+            // perform in parallel but limit concurrency to avoid overload
+            // simple concurrency limiter:
+            const concurrency = 10;
+            const results = [];
+            for (let i = 0; i < list.length; i += concurrency) {
+                const chunk = list.slice(i, i + concurrency);
+                const promises = chunk.map(async item => {
+                    try {
+                        item.profilePicUrl = await safeProfilePic(item.jid);
+                    } catch (e) {
+                        item.profilePicUrl = null;
+                    }
+                    return item;
+                });
+                const resolved = await Promise.all(promises);
+                results.push(...resolved);
+            }
+            list = results;
+        }
+
+        // Remove _raw to keep response small (or keep if you want)
+        list = list.map(({ _raw, ...rest }) => rest);
+
+        return res.json({
+            success: true,
+            total,
+            count: list.length,
+            offset,
+            limit,
+            data: list,
+            timestamp: moment().format('YYYY-MM-DD HH:mm:ss')
+        });
+    } catch (error) {
+        console.error('GET /contacts error:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 
 connectToWhatsApp().catch(err => console.error('Connection error:', err));
 
