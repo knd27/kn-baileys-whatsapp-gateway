@@ -3,10 +3,10 @@ version: "3.8"
 services:
   baileys-gateway:
     build: .
-    container_name: baileys_byu
+    container_name: baileys_
     restart: unless-stopped
     ports:
-      - "3080:3000"
+      - "3000:3000"
     environment:
       - TZ=Asia/Jakarta
       - WEBHOOK_URL_1=${WEBHOOK_URL_1:-}

@@ -1,6 +1,7 @@
 node_modules/
 sessions/
 media/
+docker-compose.yml
 .env
 *.log
 .DS_Store
