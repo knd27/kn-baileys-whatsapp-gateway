@@ -1,6 +1,7 @@
 node_modules/
 sessions/
 media/
+log/
 docker-compose.yml
 .env
 *.log

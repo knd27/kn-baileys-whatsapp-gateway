@@ -20,6 +20,8 @@ const WEBHOOK_URL_2 = process.env.WEBHOOK_URL_2;
 const WEBHOOK_URL_3 = process.env.WEBHOOK_URL_3;
 const MEDIA_PATH = process.env.MEDIA_PATH || '/app/media';
 const SESSION_DIR = './sessions';
+const LOG_DIR = "/app/log";
+const LOG_FILE = `${LOG_DIR}/baileys.log`;
 let ME_NUMBER = process.env.ME_NUMBER || null; // nomor akun WhatsApp utama (untuk fromMe handling)
 
 moment.tz.setDefault(TIMEZONE);
@@ -44,6 +46,24 @@ const upload = multer({ storage: storage });
 
 if (!fs.existsSync(MEDIA_PATH)) {
     fs.mkdirSync(MEDIA_PATH, { recursive: true });
+}
+
+
+if (!fs.existsSync(LOG_DIR)) {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    console.log("Created log directory:", LOG_DIR);
+}
+
+function logBaileysEvent(data) {
+    try {
+        const tgl = moment().format("YYYY-MM-DD HH:mm:ss") + " WIB"
+        const line = tgl + "\n" + data + "\n\n";
+        fs.appendFile(LOG_FILE, line, (err) => {
+            if (err) console.error("Error writing log:", err);
+        });
+    } catch (e) {
+        console.error("Error generating log:", e);
+    }
 }
 
 async function sendWebhook(url, data) {
@@ -340,6 +360,8 @@ function formatMessage(m) {
     };
 
     console.log("🔍 DEBUG FULL MESSAGE: ", JSON.stringify(m, null, 2));
+    logBaileysEvent(JSON.stringify(m, null, 2));
+
 
     // ------- Text Message -------
     if (m.message?.conversation) {
