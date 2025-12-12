@@ -12,12 +12,12 @@ services:
       - WEBHOOK_URL_1=${WEBHOOK_URL_1:-}
       - WEBHOOK_URL_2=${WEBHOOK_URL_2:-}
       - WEBHOOK_URL_3=${WEBHOOK_URL_3:-}
-      - MEDIA_PATH=/app/media
       - PORT=3000
     volumes:
       - ./sessions:/app/sessions
       - ./media:/app/media
       - ./src:/app/src
+      - ./log:/app/log
     networks:
       - baileys_network
 
