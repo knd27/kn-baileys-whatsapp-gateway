@@ -177,12 +177,13 @@ function detectFileTypeFromBuffer(buffer) {
     return null;
 }
 
+// -----------------
 async function downloadMedia(message) {
     try {
         const messageType = Object.keys(message.message || {})[0];
         const msg = message.message[messageType];
 
-        // Download buffer dari media
+        // ... (Bagian pengunduhan buffer tetap sama) ...
         const buffer = await downloadMediaMessage(
             message,
             'buffer',
@@ -193,15 +194,35 @@ async function downloadMedia(message) {
             }
         );
 
-        // Ambil nomor pengirim
-        const sender = message.key.remoteJid.split('@')[0];
-        const senderFolder = path.join(MEDIA_PATH, sender);
+        // --- Bagian Penentuan Lokasi Penyimpanan yang Dimodifikasi ---
 
-        // Buat folder untuk pengirim jika belum ada
-        if (!fs.existsSync(senderFolder)) {
-            fs.mkdirSync(senderFolder, { recursive: true });
+        // 1. Ambil ID pesan sebagai nama file dasar
+        const fileBaseName = message.key.id;
+        
+        // 2. Tentukan apakah pesan ini adalah Status
+        // Status menggunakan JID 'status@broadcast'
+        const isStatus = message.key.remoteJid === 'status@broadcast';
+        
+        // 3. Tentukan folder penyimpanan
+        let subfolder;
+        if (isStatus) {
+            // Jika Status, subfolder adalah 'status'
+            subfolder = 'status';
+        } else {
+            // Jika bukan Status, subfolder adalah 'messages'
+            subfolder = 'messages';
+        }
+        
+        // 4. Gabungkan MEDIA_PATH dengan subfolder yang ditentukan
+        const savePath = path.join(MEDIA_PATH, subfolder);
+
+        // 5. Buat folder jika belum ada
+        if (!fs.existsSync(savePath)) {
+            fs.mkdirSync(savePath, { recursive: true });
         }
 
+        // --- Lanjutan kode (Penentuan Ekstensi dan Penulisan File) ---
+        
         const timestamp = moment().format('YYYYMMDDHHmmss');
         const random = Math.random().toString(36).substring(7);
 
@@ -223,41 +244,40 @@ async function downloadMedia(message) {
                 detectedMime = detected.mime || null;
             }
         }
-
-        const filename = `${timestamp}-${random}.${ext}`;
-        const filepath = path.join(senderFolder, filename);
+        
+        // Gunakan ID pesan sebagai nama file utama
+        const filename = `${fileBaseName}.${ext}`; 
+        const filepath = path.join(savePath, filename);
 
         // Tulis file ke disk
         fs.writeFileSync(filepath, buffer);
 
-        // Jika kita mendeteksi mimetype yang berbeda setelah menyimpan dengan .bin,
-        // dan nama file berakhiran .bin atau ext berbeda, kita rename file ke ekstensi yang benar.
-        // (jika file sudah benar ext, ini akan dilewati)
+        // Logika rename (Jika terdeteksi .bin dan ekstensi baru ditemukan)
         if (detectedMime && ext && filepath.endsWith('.bin')) {
-            const newFilename = `${timestamp}-${random}.${ext}`;
-            const newPath = path.join(senderFolder, newFilename);
+            const newFilename = `${fileBaseName}.${ext}`;
+            const newPath = path.join(savePath, newFilename);
             try {
                 fs.renameSync(filepath, newPath);
             } catch (err) {
                 console.warn('Gagal rename file berdasarkan magic bytes:', err.message);
             }
+            // Return setelah rename
             return {
                 filename: newFilename,
                 filepath: newPath,
-                relativePath: `${sender}/${newFilename}`,
+                relativePath: path.join(subfolder, newFilename), // Menggunakan subfolder sebagai path relatif
                 size: buffer.length,
                 mimetype: detectedMime
             };
         }
 
-        // Jika mimetype tidak ada tetapi kita menemukan detectedMime earlier and ext was changed before writing,
-        // ensure returned mimetype is included.
         const returnMime = detectedMime || mimetype || null;
 
+        // Return standar
         return {
             filename,
             filepath,
-            relativePath: `${sender}/${filename}`,
+            relativePath: path.join(subfolder, filename), // Menggunakan subfolder sebagai path relatif
             size: buffer.length,
             mimetype: returnMime
         };
@@ -266,6 +286,7 @@ async function downloadMedia(message) {
         return null;
     }
 }
+
 // ----------------------------------------------------------------------
 // ---------------------------------------------------------
 // Ambil nomor pengirim yang valid untuk balas pesan
@@ -543,60 +564,194 @@ app.get('/status', (req, res) => {
     });
 });
 
+// app.post('/send-message', async (req, res) => {
+//     try {
+//         const { number, message } = req.body;
+        
+//         if (!number || !message) {
+//             return res.status(400).json({ error: 'Number and message are required' });
+//         }
+        
+//         const jid = number.includes('@s.whatsapp.net') ? number : `${number}@s.whatsapp.net`;
+        
+//         const sent = await sock.sendMessage(jid, { text: message });
+        
+//         res.json({
+//             success: true,
+//             messageId: sent.key.id,
+//             timestamp: moment().format('YYYY-MM-DD HH:mm:ss')
+//         });
+//     } catch (error) {
+//         res.status(500).json({ error: error.message });
+//     }
+// });
+
+// =============================================================
+// ENDPOINT SEND MESSAGE
+// =============================================================
 app.post('/send-message', async (req, res) => {
     try {
-        const { number, message } = req.body;
-        
-        if (!number || !message) {
-            return res.status(400).json({ error: 'Number and message are required' });
+        if (!sock) return res.status(500).json({ error: "WhatsApp belum terkoneksi" });
+
+        const { to, text, mediaUrl, filename } = req.body;
+        if (!to) return res.status(400).json({ error: "Parameter 'to' wajib diisi" });
+
+        let jid = to;
+
+        // Jika kirim ke nomor biasa → ubah ke format JID
+        if (/^\d+$/.test(to)) {
+            jid = to + "@s.whatsapp.net";
         }
-        
-        const jid = number.includes('@s.whatsapp.net') ? number : `${number}@s.whatsapp.net`;
-        
-        const sent = await sock.sendMessage(jid, { text: message });
-        
-        res.json({
-            success: true,
-            messageId: sent.key.id,
-            timestamp: moment().format('YYYY-MM-DD HH:mm:ss')
+
+        // Jika mediaUrl ada → kirim media
+        if (mediaUrl) {
+            const axiosResp = await axios.get(mediaUrl, { responseType: "arraybuffer" });
+            const buffer = Buffer.from(axiosResp.data);
+
+            const mime = axiosResp.headers["content-type"] || "application/octet-stream";
+            const ext = mime.split("/")[1] || "bin";
+
+            let sendData = {};
+
+            if (mime.startsWith("image/")) {
+                sendData.image = buffer;
+                sendData.caption = text || "";
+            }
+            else if (mime.startsWith("video/")) {
+                sendData.video = buffer;
+                sendData.caption = text || "";
+            }
+            else {
+                sendData.document = buffer;
+                sendData.mimetype = mime;
+                sendData.fileName = filename || `file.${ext}`;
+            }
+
+            const result = await sock.sendMessage(jid, sendData);
+
+            return res.json({
+                status: "success",
+                to,
+                type: "media",
+                result
+            });
+        }
+
+        // Jika hanya teks
+        if (text) {
+            const result = await sock.sendMessage(jid, { text });
+
+            return res.json({
+                status: "success",
+                to,
+                type: "text",
+                result
+            });
+        }
+
+        return res.status(400).json({
+            error: "Tidak ada text atau mediaUrl yang dikirim"
         });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+
+    } catch (err) {
+        console.error("Send message error:", err);
+        res.status(500).json({ error: err.message });
     }
 });
 
+
+// =============================================================
+// ENDPOINT REPLY MESSAGE (FINAL FIX PERSONAL + GROUP)
+// =============================================================
 app.post('/reply-message', async (req, res) => {
     try {
-        const { number, message, quotedMessageId } = req.body;
-        
-        if (!number || !message || !quotedMessageId) {
-            return res.status(400).json({ error: 'Number, message, and quotedMessageId are required' });
+        if (!sock) return res.status(500).json({ error: "WhatsApp belum terkoneksi" });
+
+        const { messageId, to, participant, text, mediaUrl, filename } = req.body;
+
+        if (!messageId || !to) {
+            return res.status(400).json({ error: "messageId & to wajib diisi" });
         }
+        if (!text && !mediaUrl) {
+            return res.status(400).json({ error: "text atau mediaUrl harus diisi" });
+        }
+
+        // Tentukan remoteJid
+        let remoteJid = /^\d+$/.test(to) ? `${to}@s.whatsapp.net` : to;
+        const isGroup = remoteJid.endsWith("@g.us");
         
-        const jid = number.includes('@s.whatsapp.net') ? number : `${number}@s.whatsapp.net`;
-        
-        const sent = await sock.sendMessage(jid, {
-            text: message
-        }, {
-            quoted: {
-                key: {
-                    remoteJid: jid,
-                    id: quotedMessageId,
-                    fromMe: false
-                },
-                message: { conversation: '' }
+        console.log("🔥 remoteJid =", remoteJid);
+
+        // Siapkan quoted message
+        const quotedMsg = {
+            key: {
+                remoteJid: remoteJid,
+                id: messageId,
+                fromMe: false
+            },
+            message: { conversation: '' }
+        };
+
+        // Siapkan message content
+        let messageContent = {};
+
+        // Jika ada media
+        if (mediaUrl) {
+            const resp = await axios.get(mediaUrl, { responseType: "arraybuffer" });
+            const buffer = Buffer.from(resp.data);
+            const mime = resp.headers["content-type"] || "application/octet-stream";
+
+            if (mime.startsWith("image/")) {
+                messageContent.image = buffer;
+                messageContent.caption = text || "";
+            } else if (mime.startsWith("video/")) {
+                messageContent.video = buffer;
+                messageContent.caption = text || "";
+            } else {
+                messageContent.document = buffer;
+                messageContent.mimetype = mime;
+                messageContent.fileName = filename || "file";
             }
-        });
-        
-        res.json({
+        } else {
+            // Jika hanya text
+            messageContent.text = text;
+        }
+
+        // Kirim message
+        let result;
+        if (isGroup) {
+            // Untuk group: gunakan contextInfo
+            if (!participant) {
+                return res.status(400).json({ error: "participant WAJIB untuk reply pesan grup" });
+            }
+
+            messageContent.contextInfo = {
+                stanzaId: messageId,
+                remoteJid: remoteJid,
+                participant: participant.includes("@") ? participant : `${participant}@s.whatsapp.net`
+            };
+
+            result = await sock.sendMessage(remoteJid, messageContent);
+        } else {
+            // Untuk personal: gunakan quoted
+            result = await sock.sendMessage(remoteJid, messageContent, { quoted: quotedMsg });
+        }
+
+        return res.json({
             success: true,
-            messageId: sent.key.id,
+            type: isGroup ? "reply-group" : "reply-personal",
+            messageId: result.key.id,
             timestamp: moment().format('YYYY-MM-DD HH:mm:ss')
         });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+
+    } catch (err) {
+        console.error("Reply error:", err);
+        res.status(500).json({ error: err.message });
     }
 });
+// =============================================================
+
+
 
 app.post('/send-file', upload.single('file'), async (req, res) => {
     try {
@@ -823,6 +978,74 @@ async function safeProfilePic(sockInstance, jid) {
     }
     return null;
 }
+
+
+/**
+ * Endpoint untuk melayani file media berdasarkan ID unik.
+ * Mencari file di folder 'status' dan 'messages'.
+ * * @param {string} mediaId - ID unik dari file (misalnya, ACBCAA9B252721F36D5436B264380589)
+ */
+app.get('/lihat', async (req, res) => {
+    // 1. Ambil ID media dari query parameter
+    const mediaId = req.query.media;
+
+    if (!mediaId) {
+        // Cek jika ID media tidak disediakan
+        return res.status(400).json({ error: 'Parameter "media" dibutuhkan.' });
+    }
+
+    // Direktori yang harus dicari (sesuai dengan fungsi downloadMedia)
+    const searchDirectories = ['messages', 'status'];
+
+    let foundFilePath = null;
+    
+    // 2. Lakukan pencarian di setiap direktori
+    for (const dirName of searchDirectories) {
+        const fullDirPath = path.join(MEDIA_PATH, dirName);
+
+        try {
+            // Baca semua file di dalam folder (secara sinkron untuk penyederhanaan)
+            const files = fs.readdirSync(fullDirPath);
+
+            // Cari file yang diawali dengan mediaId (mengabaikan ekstensi)
+            const foundFile = files.find(file => {
+                // Pastikan file dimulai dengan ID yang dicari dan diikuti oleh titik (ekstensi)
+                // Ini mencegah kecocokan parsial jika ID pesan lainnya mengandung substring ID ini
+                return file.startsWith(mediaId + '.');
+            });
+
+            if (foundFile) {
+                // Jika file ditemukan, simpan jalurnya dan hentikan pencarian
+                foundFilePath = path.join(fullDirPath, foundFile);
+                break; 
+            }
+        } catch (error) {
+            // Jika folder tidak ada atau gagal dibaca, lanjutkan ke folder berikutnya
+            if (error.code !== 'ENOENT') {
+                console.warn(`Gagal membaca direktori ${fullDirPath}: ${error.message}`);
+            }
+        }
+    }
+
+    // 3. Tangani hasil pencarian
+    if (foundFilePath) {
+        // Ambil nama file dan ekstensi untuk keperluan MIME type (opsional)
+        const fileName = path.basename(foundFilePath);
+        
+        // Kirim file menggunakan res.sendFile()
+        // Ini adalah cara yang aman dan efektif untuk melayani file statis
+        return res.sendFile(foundFilePath, (err) => {
+            if (err) {
+                console.error('Error saat mengirim file:', err);
+                // Menangani jika file tidak dapat diakses saat pengiriman
+                res.status(500).json({ error: 'Gagal memuat file.' });
+            }
+        });
+    } else {
+        // Jika file tidak ditemukan di direktori manapun
+        return res.status(404).json({ error: `Media dengan ID ${mediaId} tidak ditemukan.` });
+    }
+});
 
 // ------------------------- getMeInfo (reusable) -------------------------
 /**
