@@ -15,6 +15,7 @@ const moment = require("moment-timezone");
 const axios = require("axios");
 const multer = require("multer");
 const sharp = require("sharp");
+const mariadb = require("mariadb");
 
 const app = express();
 app.use(express.json());
@@ -29,6 +30,7 @@ const MEDIA_PATH = process.env.MEDIA_PATH || "/app/media";
 const SESSION_DIR = "./sessions";
 const LOG_DIR = "/app/log";
 const LOG_FILE = `${LOG_DIR}/baileys.log`;
+const DB_TABLE = process.env.DB_TABLE || "messages";
 let ME_NUMBER = process.env.ME_NUMBER || null; // nomor akun WhatsApp utama (untuk fromMe handling)
 
 moment.tz.setDefault(TIMEZONE);
@@ -296,7 +298,7 @@ async function downloadMedia(message) {
       return {
         filename: newFilename,
         filepath: newPath,
-        relativePath: path.join(subfolder, newFilename), // Menggunakan subfolder sebagai path relatif
+        relativePath: path.join(subfolder, newFilename),
         size: buffer.length,
         mimetype: detectedMime,
       };
@@ -308,7 +310,7 @@ async function downloadMedia(message) {
     return {
       filename,
       filepath,
-      relativePath: path.join(subfolder, filename), // Menggunakan subfolder sebagai path relatif
+      relativePath: path.join(subfolder, filename),
       size: buffer.length,
       mimetype: returnMime,
     };
@@ -492,6 +494,7 @@ function formatMessage(m) {
       data.location.longitude;
   }
 
+  data.text = data.text || data.caption || null;
   return data;
 }
 
@@ -581,6 +584,8 @@ async function connectToWhatsApp() {
       await sendToAllWebhooks(formattedMessage);
 
       console.log("📨 Webhook : Message received:", formattedMessage);
+      // Save message to database
+      saveMessageToDatabase(formattedMessage);
     }
   });
 }
@@ -1013,53 +1018,6 @@ async function safeProfilePic(sockInstance, jid) {
   }
   return null;
 }
-
-// Endpoint untuk mengirim pesan dengan tombol (Button Message)
-app.post("/send-button", async (req, res) => {
-  try {
-    // Mengambil data dari body request
-    const { to, text, footer, buttons, headerType = 1 } = req.body;
-    const number = to;
-
-    if (
-      !number ||
-      !text ||
-      !buttons ||
-      !Array.isArray(buttons) ||
-      buttons.length === 0
-    ) {
-      return res.status(400).json({
-        error:
-          "Number, text, dan buttons (sebagai array non-kosong) wajib diisi.",
-      });
-    }
-
-    const jid = number.includes("@s.whatsapp.net")
-      ? number
-      : `${number}@s.whatsapp.net`;
-
-    // >>> PERUBAHAN UTAMA DI SINI <<<
-    const templateMessage = {
-      // Header tidak digunakan di sini, langsung ke konten.
-      text: text, // Body pesan utama
-      footer: footer || "Powered by API", // Footer pesan
-      templateButtons: buttons, // Gunakan templateButtons
-      // Tidak perlu headerType jika hanya teks
-    };
-
-    const sent = await sock.sendMessage(jid, templateMessage);
-    console.log("Button message sent:", sent);
-
-    res.json({
-      success: true,
-      messageId: sent.key.id,
-      timestamp: moment().format("YYYY-MM-DD HH:mm:ss"),
-    });
-  } catch (error) {
-    console.error("Error sending button message:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
 
 /**
  * Endpoint untuk melayani file media berdasarkan ID unik.
@@ -1500,6 +1458,44 @@ app.get("/contacts", async (req, res) => {
     return res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// Setup MariaDB connection
+const pool = mariadb.createPool({
+  host: process.env.DB_HOST || "localhost",
+  user: process.env.DB_USER || "root",
+  password: process.env.DB_PASSWORD || "",
+  database: process.env.DB_NAME || "whatsapp_gateway",
+  connectionLimit: 5,
+});
+
+// Save message to database
+async function saveMessageToDatabase(data) {
+  console.log("Saving message to database." + DB_TABLE + ": ", data);
+  if (data.messageType === "stickerMessage") {
+    console.log("Sticker message detected, skipping database save.");
+    return;
+  }
+
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const query = `INSERT INTO ${DB_TABLE} (messageId, timestamp, senderNumber, remoteJid, pushName, text, media) VALUES (?, ?, ?, ?, ?, ?, ?)`;
+    const values = [
+      data.messageId,
+      data.timestamp,
+      data.from,
+      data.remoteJid,
+      data.pushName || null,
+      data.text || data.caption || null,
+      data.media?.relativePath || null,
+    ];
+    await conn.query(query, values);
+  } catch (err) {
+    console.error("Database error:", err);
+  } finally {
+    if (conn) conn.release();
+  }
+}
 
 connectToWhatsApp().catch((err) => console.error("Connection error:", err));
 

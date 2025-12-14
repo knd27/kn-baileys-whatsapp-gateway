@@ -12,6 +12,11 @@ services:
       - WEBHOOK_URL_1=${WEBHOOK_URL_1:-}
       - WEBHOOK_URL_2=${WEBHOOK_URL_2:-}
       - WEBHOOK_URL_3=${WEBHOOK_URL_3:-}
+      - DB_HOST=${DB_HOST:-}
+      - DB_USER=${DB_USER:-}
+      - DB_PASSWORD=${DB_PASSWORD:-}
+      - DB_NAME=${DB_NAME:-}
+      - DB_TABLE=${DB_TABLE:-}
       - PORT=3000
     volumes:
       - ./sessions:/app/sessions
