@@ -44,8 +44,8 @@ POST /send-message
 Content-Type: application/json
 
 {
-  "number": "628123456789",
-  "message": "Hello World!"
+  "to": "628123456789",
+  "text": "Hello World!"
 }
 ```
 
@@ -55,9 +55,9 @@ POST /reply-message
 Content-Type: application/json
 
 {
-  "number": "628123456789",
-  "message": "This is reply",
-  "quotedMessageId": "MESSAGE_ID_HERE"
+  "to": "628123456789",
+  "text": "This is reply",
+  "messageId": "MESSAGE_ID_HERE"
 }
 ```
 
@@ -67,7 +67,7 @@ POST /send-file
 Content-Type: multipart/form-data
 
 file: [binary file]
-number: 628123456789
+to: 628123456789
 caption: "Photo caption"
 type: image|video|document
 ```
@@ -78,7 +78,7 @@ POST /send-sticker
 Content-Type: multipart/form-data
 
 file: [image file]
-number: 628123456789
+to: 628123456789
 ```
 
 ### 5. **Send Location**
@@ -87,7 +87,7 @@ POST /send-loc
 Content-Type: application/json
 
 {
-  "number": "628123456789",
+  "to": "628123456789",
   "latitude": -6.200000,
   "longitude": 106.816666,
   "name": "Jakarta",
@@ -97,11 +97,11 @@ Content-Type: application/json
 
 ### 6. **Send List Menu** (Dropdown Menu - Yang Berfungsi di WhatsApp Personal)
 ```bash
-POST /button
+POST /send-button
 Content-Type: application/json
 
 {
-  "number": "628123456789",
+  "to": "628123456789",
   "text": "Silakan pilih menu:",
   "footer": "Powered by Baileys",
   "buttons": ["Menu 1", "Menu 2", "Menu 3"]
