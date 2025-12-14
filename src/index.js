@@ -1475,6 +1475,10 @@ async function saveMessageToDatabase(data) {
     console.log("Sticker message detected, skipping database save.");
     return;
   }
+  if (data.text === null && data.media?.relativePath === null) {
+    console.log("No text or media found, skipping database save.");
+    return;
+  }
 
   let conn;
   try {
