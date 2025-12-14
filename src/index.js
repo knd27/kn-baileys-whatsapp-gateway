@@ -411,10 +411,11 @@ function formatMessage(m) {
       ? moment.unix(m.messageTimestamp).format("YYYY-MM-DD HH:mm:ss")
       : null,
     messageType: messageType,
+    hasMedia: false,
   };
 
   console.log(
-    "--------------------\n🔍 DEBUG FULL MESSAGE: ",
+    "--------------------\n🔍 DEBUG FULL MESSAGE: \n",
     JSON.stringify(m, null, 2)
   );
   logBaileysEvent(JSON.stringify(m, null, 2));
@@ -574,10 +575,12 @@ async function connectToWhatsApp() {
         m.message.videoMessage ||
         m.message.documentMessage;
 
+      formattedMessage.hasMedia = false;
       if (hasMedia) {
         const mediaInfo = await downloadMedia(m);
         if (mediaInfo) {
           formattedMessage.media = mediaInfo;
+          formattedMessage.hasMedia = true;
         }
       }
 
@@ -904,7 +907,8 @@ app.post("/send-loc", async (req, res) => {
 
 app.post("/typing", async (req, res) => {
   try {
-    const { number, duration } = req.body;
+    const { to, duration } = req.body;
+    const number = to;
 
     if (!number) {
       return res.status(400).json({ error: "Number is required" });
@@ -1475,7 +1479,7 @@ async function saveMessageToDatabase(data) {
     console.log("Sticker message detected, skipping database save.");
     return;
   }
-  if (data.text === null && data.media?.relativePath === null) {
+  if (data.text === null && data.hasMedia === false) {
     console.log("No text or media found, skipping database save.");
     return;
   }

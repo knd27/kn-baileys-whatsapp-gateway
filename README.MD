@@ -31,7 +31,7 @@ docker-compose up -d --build
 
 ### 5. Lihat QR Code
 ```bash
-docker logs -f baileys_whatsapp_gateway
+docker logs -f baileys_
 ```
 
 Scan QR Code yang muncul di terminal dengan WhatsApp Anda.
@@ -95,76 +95,12 @@ Content-Type: application/json
 }
 ```
 
-### 6. **Send List Menu** (Dropdown Menu - Yang Berfungsi di WhatsApp Personal)
+### 6. **Lihat Media**
 ```bash
-POST /send-button
-Content-Type: application/json
+GET /media?id=<messageId>
 
-{
-  "to": "628123456789",
-  "text": "Silakan pilih menu:",
-  "footer": "Powered by Baileys",
-  "buttons": ["Menu 1", "Menu 2", "Menu 3"]
-}
 ```
 
-Atau gunakan format lengkap:
-```bash
-POST /send-list
-Content-Type: application/json
-
-{
-  "number": "628123456789",
-  "text": "Selamat datang! Pilih layanan:",
-  "title": "📋 Menu Layanan",
-  "buttonText": "Lihat Menu",
-  "footer": "Pilih salah satu",
-  "sections": [
-    {
-      "title": "Layanan Utama",
-      "rows": [
-        {
-          "title": "Informasi Produk",
-          "rowId": "info_product",
-          "description": "Lihat katalog produk kami"
-        },
-        {
-          "title": "Cek Pesanan",
-          "rowId": "check_order",
-          "description": "Lacak status pesanan"
-        }
-      ]
-    },
-    {
-      "title": "Bantuan",
-      "rows": [
-        {
-          "title": "Customer Service",
-          "rowId": "cs",
-          "description": "Hubungi CS kami"
-        }
-      ]
-    }
-  ]
-}
-```
-
-**Note:** Button biasa (interactive button) **tidak didukung** di WhatsApp personal account. List message adalah alternatif terbaik yang berfungsi.
-
-### 6b. **Send Copy Code**
-```bash
-POST /send-copy-code
-Content-Type: application/json
-
-{
-  "number": "628123456789",
-  "message": "Kode verifikasi Anda:",
-  "code": "ABC123XYZ"
-}
-```
-Code akan dikirim dalam format monospace (```code```) yang bisa di-copy dengan long-press.
-
-**Note:** Copy button otomatis juga **tidak didukung** di WhatsApp personal. Code dikirim dalam format yang mudah di-copy manual.
 
 ### 7. **Typing Indicator**
 ```bash
@@ -172,7 +108,7 @@ POST /typing
 Content-Type: application/json
 
 {
-  "number": "628123456789",
+  "to": "628123456789",
   "duration": 3000
 }
 ```
@@ -269,14 +205,14 @@ baileys-gateway/
 │   └── index.js
 ├── sessions/          # Session WhatsApp (persistent)
 └── media/            # File media yang diterima
-    ├── 628123456789/ # Folder per nomor pengirim
-    │   ├── 20241208143000-abc123.jpg
-    │   └── 20241208143500-def456.mp4
-    └── 628987654321/
-        └── 20241208144000-ghi789.pdf
+    ├── messages/ 
+    │   ├── <messageId>.jpg
+    │   └── <messageId>.mp4
+    └── status/
+        └── <messageId>.jpg
 ```
 
-**Catatan:** Setiap file media yang diterima akan disimpan dalam folder sesuai nomor pengirim untuk memudahkan organisasi.
+**Catatan:** Setiap file media yang diterima akan disimpan dalam folder messages / status sesuai jenis.
 
 ## 🔄 Docker Commands
 
@@ -288,7 +224,7 @@ docker-compose up -d
 docker-compose down
 
 # View logs
-docker logs -f baileys_whatsapp_gateway
+docker logs -f baileys_
 
 # Rebuild
 docker-compose up -d --build
@@ -340,7 +276,7 @@ docker-compose down -v
 
 **QR Code tidak muncul:**
 ```bash
-docker logs baileys_whatsapp_gateway
+docker logs baileys_
 ```
 
 **Connection error:**
