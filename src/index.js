@@ -1029,6 +1029,8 @@ async function safeProfilePic(sockInstance, jid) {
  * * @param {string} mediaId - ID unik dari file (misalnya, ACBCAA9B252721F36D5436B264380589)
  */
 app.get("/media", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
   // 1. Ambil ID media dari query parameter
   const mediaId = req.query.id;
 
