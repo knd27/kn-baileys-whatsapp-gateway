@@ -935,6 +935,7 @@ app.post("/typing", async (req, res) => {
 });
 
 app.get("/profile", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
   try {
     const { number } = req.query;
 
@@ -1115,6 +1116,7 @@ app.get("/media", async (req, res) => {
 
 // Endpoint untuk mengambil informasi group
 app.get("/groupInfo", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
   try {
     const { jid } = req.query; // Mengambil jid dari query parameter
 
@@ -1296,6 +1298,7 @@ app.get("/me", async (req, res) => {
 
 // GET /contact-info?jid=628123... atau ?jid=628123@s.whatsapp.net
 app.get("/contact-info", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
   try {
     const q = req.query.jid;
     if (!q)

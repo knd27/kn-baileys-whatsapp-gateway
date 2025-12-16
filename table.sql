@@ -1,8 +1,7 @@
-
 CREATE TABLE `messages` (
   `id` bigint(20) UNSIGNED NOT NULL,
   `messageId` varchar(50) NOT NULL,
-  `timestamp` varchar(20) DEFAULT NULL,
+  `timestamp` datetime DEFAULT NULL,
   `senderNumber` varchar(20) DEFAULT NULL,
   `remoteJid` varchar(30) DEFAULT NULL,
   `pushName` varchar(40) DEFAULT NULL,
