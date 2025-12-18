@@ -16,6 +16,7 @@ const axios = require("axios");
 const multer = require("multer");
 const sharp = require("sharp");
 const mariadb = require("mariadb");
+const { send } = require("process");
 
 const app = express();
 app.use(express.json());
@@ -1468,6 +1469,25 @@ app.get("/contacts", async (req, res) => {
   }
 });
 
+app.get("/getInbox", async (req, res) => {
+  try {
+    const senderNumber = req.query.senderNumber || "*";
+    const limit = parseInt(req.query.limit) || 50;
+    const messages = await getMessagesFromDatabase(senderNumber, limit);
+    return res.json({
+      success: true,
+      senderNumber,
+      limit,
+      count: messages.length,
+      messages,
+      timestamp: moment().format("YYYY-MM-DD HH:mm:ss"),
+    });
+  } catch (error) {
+    console.error("Error fetching inbox messages:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Setup MariaDB connection
 const pool = mariadb.createPool({
   host: process.env.DB_HOST || "localhost",
@@ -1505,6 +1525,44 @@ async function saveMessageToDatabase(data) {
     await conn.query(query, values);
   } catch (err) {
     console.error("Database error:", err);
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
+// Get messages from database
+async function getMessagesFromDatabase(senderNumber = "*", limit = 50) {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+
+    let query = `
+      SELECT 
+        messageId,
+        timestamp,
+        senderNumber,
+        remoteJid,
+        pushName,
+        text,
+        media
+      FROM ${DB_TABLE} `;
+    if (senderNumber !== "*") {
+      query += ` WHERE senderNumber = ? `;
+    }
+    query += `
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `;
+    console.log("Executing query:", query);
+
+    const params = senderNumber !== "*" ? [senderNumber, limit] : [limit];
+    console.log("With params:", params);
+
+    const rows = await conn.query(query, params);
+    return rows;
+  } catch (err) {
+    console.error("Database read error:", err);
+    return [];
   } finally {
     if (conn) conn.release();
   }
