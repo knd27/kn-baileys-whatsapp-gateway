@@ -1498,11 +1498,29 @@ app.get("/contacts", async (req, res) => {
 app.get("/getInbox", async (req, res) => {
   try {
     const senderNumber = req.query.senderNumber || "*";
-    const limit = parseInt(req.query.limit) || 50;
-    const messages = await getMessagesFromDatabase(senderNumber, limit);
+    const limit = parseInt(req.query.limit) || 200;
+    const messages = await getInboxFromDatabase(senderNumber, limit);
     return res.json({
       success: true,
       senderNumber,
+      limit,
+      count: messages.length,
+      messages,
+      timestamp: moment().format("YYYY-MM-DD HH:mm:ss"),
+    });
+  } catch (error) {
+    console.error("Error fetching inbox messages:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get("/getSent", async (req, res) => {
+  try {
+    const toNumber = req.query.toNumber || "*";
+    const limit = parseInt(req.query.limit) || 150;
+    const messages = await getSentFromDatabase(toNumber, limit);
+    return res.json({
+      success: true,
       limit,
       count: messages.length,
       messages,
@@ -1561,7 +1579,7 @@ async function saveMessageToDatabase(data) {
 }
 
 // Get messages from database
-async function getMessagesFromDatabase(senderNumber = "*", limit = 50) {
+async function getInboxFromDatabase(senderNumber = "*", limit = 50) {
   let conn;
   try {
     conn = await pool.getConnection();
@@ -1571,22 +1589,68 @@ async function getMessagesFromDatabase(senderNumber = "*", limit = 50) {
         messageId,
         timestamp,
         senderNumber,
+        toNumber,
         remoteJid,
         pushName,
         text,
         media
       FROM ${DB_TABLE} `;
+    let params = [];
+    // Logika Filter
     if (senderNumber !== "*") {
       query += ` WHERE senderNumber = ? `;
+      params.push(senderNumber);
+    } else {
+      query += ` WHERE (senderNumber IS NOT NULL) `;
     }
-    query += `
-      ORDER BY timestamp DESC
-      LIMIT ?
-    `;
-    console.log("Executing query:", query);
 
-    const params = senderNumber !== "*" ? [senderNumber, limit] : [limit];
-    console.log("With params:", params);
+    // Penambahan Order dan Limit
+    query += ` ORDER BY timestamp DESC LIMIT ? `;
+    params.push(limit);
+
+    console.log("Executing query:", query, "with params:", params);
+
+    const rows = await conn.query(query, params);
+    return rows;
+  } catch (err) {
+    console.error("Database read error:", err);
+    return [];
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
+async function getSentFromDatabase(toNumber = "*", limit = 100) {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+
+    let query = `
+      SELECT 
+        messageId,
+        timestamp,
+        senderNumber,
+        toNumber,
+        remoteJid,
+        pushName,
+        text,
+        media
+      FROM ${DB_TABLE} `;
+    let params = [];
+    // Logika Filter
+    if (toNumber !== "*") {
+      query += ` WHERE toNumber = ? `;
+      params.push(toNumber);
+    } else {
+      query += ` WHERE (senderNumber IS NULL OR senderNumber = ?) `;
+      params.push(ME_NUMBER);
+    }
+
+    // Penambahan Order dan Limit
+    query += ` ORDER BY timestamp DESC LIMIT ? `;
+    params.push(limit);
+
+    console.log("Executing query:", query, "with params:", params);
 
     const rows = await conn.query(query, params);
     return rows;
