@@ -1509,6 +1509,7 @@ async function saveMessageToDatabase(data) {
     return;
   }
 
+  const senderNumber = data.from ?? ME_NUMBER;
   let conn;
   try {
     conn = await pool.getConnection();
@@ -1516,7 +1517,7 @@ async function saveMessageToDatabase(data) {
     const values = [
       data.messageId,
       data.timestamp,
-      data.from,
+      senderNumber,
       data.remoteJid,
       data.pushName || null,
       data.text || data.caption || null,
