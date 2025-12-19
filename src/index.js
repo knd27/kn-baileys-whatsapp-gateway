@@ -33,6 +33,7 @@ const LOG_DIR = "/app/log";
 const LOG_FILE = `${LOG_DIR}/baileys.log`;
 const DB_TABLE = process.env.DB_TABLE || "messages";
 let ME_NUMBER = process.env.ME_NUMBER || null; // nomor akun WhatsApp utama (untuk fromMe handling)
+let ME_pushName = "";
 
 moment.tz.setDefault(TIMEZONE);
 
@@ -656,6 +657,18 @@ app.post("/send-message", async (req, res) => {
 
       const result = await sock.sendMessage(jid, sendData);
 
+      console.log("Media sent result:", result);
+      const data = {
+        messageId: result.key.id,
+        senderNumber: null,
+        toNumber: to, // result.key.remoteJid,
+        remoteJid: result.key.remoteJid,
+        pushName: ME_pushName,
+        text: text,
+      };
+      console.log("text send: ", data);
+      saveMessageToDatabase(data);
+
       return res.json({
         status: "success",
         to,
@@ -667,6 +680,18 @@ app.post("/send-message", async (req, res) => {
     // Jika hanya teks
     if (text) {
       const result = await sock.sendMessage(jid, { text });
+      console.log("Text sent result:", result);
+
+      const data = {
+        messageId: result.key.id,
+        senderNumber: null,
+        toNumber: to, // result.key.remoteJid,
+        remoteJid: result.key.remoteJid,
+        pushName: ME_pushName,
+        text: text,
+      };
+      console.log("text send: ", data);
+      saveMessageToDatabase(data);
 
       return res.json({
         status: "success",
@@ -1251,6 +1276,7 @@ async function getMeInfo(sockInstance, options = {}) {
     // finalisasi
     out.success = true;
     ME_NUMBER = out.number || ME_NUMBER; // update global ME_NUMBER jika perlu
+    ME_pushName = out.pushName ?? out.name ?? "";
     return out;
   } catch (error) {
     return {
@@ -1509,15 +1535,18 @@ async function saveMessageToDatabase(data) {
     return;
   }
 
-  const senderNumber = data.from ?? ME_NUMBER;
+  const senderNumber = data.from ?? null;
+  const toNumber = data.toNumber ?? null;
+  const timestamp = data.timestamp ?? moment().format("YYYY-MM-DD HH:mm:ss");
   let conn;
   try {
     conn = await pool.getConnection();
-    const query = `INSERT INTO ${DB_TABLE} (messageId, timestamp, senderNumber, remoteJid, pushName, text, media) VALUES (?, ?, ?, ?, ?, ?, ?)`;
+    const query = `INSERT INTO ${DB_TABLE} (messageId, timestamp, senderNumber, toNumber, remoteJid, pushName, text, media) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
     const values = [
       data.messageId,
-      data.timestamp,
+      timestamp,
       senderNumber,
+      toNumber,
       data.remoteJid,
       data.pushName || null,
       data.text || data.caption || null,
