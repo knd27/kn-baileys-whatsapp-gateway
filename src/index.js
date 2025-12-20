@@ -658,16 +658,17 @@ app.post("/send-message", async (req, res) => {
       const result = await sock.sendMessage(jid, sendData);
 
       console.log("Media sent result:", result);
-      const data = {
-        messageId: result.key.id,
-        senderNumber: null,
-        toNumber: to, // result.key.remoteJid,
-        remoteJid: result.key.remoteJid,
-        pushName: ME_pushName,
-        text: text,
-      };
-      console.log("text send: ", data);
-      saveMessageToDatabase(data);
+      if (to !== null) {
+        const data = {
+          messageId: result.key.id,
+          senderNumber: null,
+          toNumber: to, // result.key.remoteJid,
+          remoteJid: result.key.remoteJid,
+          pushName: null, // pushName dari nomor tujuan tidak diketahui saat mengirim
+          text: text,
+        };
+        saveMessageToDatabase(data);
+      }
 
       return res.json({
         status: "success",
@@ -682,16 +683,17 @@ app.post("/send-message", async (req, res) => {
       const result = await sock.sendMessage(jid, { text });
       console.log("Text sent result:", result);
 
-      const data = {
-        messageId: result.key.id,
-        senderNumber: null,
-        toNumber: to, // result.key.remoteJid,
-        remoteJid: result.key.remoteJid,
-        pushName: ME_pushName,
-        text: text,
-      };
-      console.log("text send: ", data);
-      saveMessageToDatabase(data);
+      if (to !== null) {
+        const data = {
+          messageId: result.key.id,
+          senderNumber: null,
+          toNumber: to, // result.key.remoteJid,
+          remoteJid: result.key.remoteJid,
+          pushName: null, // pushName dari nomor tujuan tidak diketahui saat mengirim
+          text: text,
+        };
+        saveMessageToDatabase(data);
+      }
 
       return res.json({
         status: "success",
@@ -731,7 +733,7 @@ app.post("/reply-message", async (req, res) => {
     let remoteJid = /^\d+$/.test(to) ? `${to}@s.whatsapp.net` : to;
     const isGroup = remoteJid.endsWith("@g.us");
 
-    console.log("🔥 remoteJid =", remoteJid);
+    // console.log("🔥 remoteJid =", remoteJid);
 
     // Siapkan quoted message
     const quotedMsg = {
@@ -792,6 +794,19 @@ app.post("/reply-message", async (req, res) => {
       result = await sock.sendMessage(remoteJid, messageContent, {
         quoted: quotedMsg,
       });
+    }
+
+    console.log("Reply sent result:", result);
+    if (to !== null) {
+      const data = {
+        messageId: result.key.id,
+        senderNumber: null,
+        toNumber: to, // result.key.remoteJid,
+        remoteJid: result.key.remoteJid,
+        pushName: null, // pushName dari nomor tujuan tidak diketahui saat mengirim
+        text: text,
+      };
+      saveMessageToDatabase(data);
     }
 
     return res.json({
@@ -1553,9 +1568,25 @@ async function saveMessageToDatabase(data) {
     return;
   }
 
-  const senderNumber = data.from ?? null;
+  let senderNumber = data.from ?? data.senderNumber ?? null;
+  if (senderNumber === ME_NUMBER && data.toNumber === null) {
+    console.log("Message from self with no toNumber, skipping database save.");
+    return;
+  }
+
+  if (senderNumber === ME_NUMBER) {
+    senderNumber = null; // jika pengirim adalah self, set ke null = sent message
+  }
+
   const toNumber = data.toNumber ?? null;
   const timestamp = data.timestamp ?? moment().format("YYYY-MM-DD HH:mm:ss");
+  if (senderNumber === null && toNumber === null) {
+    console.log(
+      "Both senderNumber and toNumber are null, skipping database save."
+    );
+    return;
+  }
+
   let conn;
   try {
     conn = await pool.getConnection();
@@ -1571,6 +1602,7 @@ async function saveMessageToDatabase(data) {
       data.media?.relativePath || null,
     ];
     await conn.query(query, values);
+    console.log("Message saved to database w/ values:", values);
   } catch (err) {
     console.error("Database error:", err);
   } finally {
