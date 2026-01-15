@@ -1547,6 +1547,35 @@ app.get("/getSent", async (req, res) => {
   }
 });
 
+app.get("/getMessage", async (req, res) => {
+  try {
+    const messageId = req.query.id || req.query.messageId;
+    if (!messageId) {
+      return res.status(400).json({
+        success: false,
+        error: "Message ID is required",
+      });
+    }
+
+    const message = await getMessageFromDatabase(messageId);
+    if (!message) {
+      return res.json({
+        success: false,
+        error: "Message not found",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message,
+      timestamp: moment().format("YYYY-MM-DD HH:mm:ss"),
+    });
+  } catch (error) {
+    console.error("Error fetching inbox messages:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Setup MariaDB connection
 const pool = mariadb.createPool({
   host: process.env.DB_HOST || "localhost",
@@ -1686,6 +1715,27 @@ async function getSentFromDatabase(toNumber = "*", limit = 100) {
 
     const rows = await conn.query(query, params);
     return rows;
+  } catch (err) {
+    console.error("Database read error:", err);
+    return [];
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
+async function getMessageFromDatabase(messageId) {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+
+    const query = `
+      SELECT 
+        *
+      FROM ${DB_TABLE} 
+      WHERE messageId = ?`;
+    const params = [messageId];
+    const rows = await conn.query(query, params);
+    return rows[0];
   } catch (err) {
     console.error("Database read error:", err);
     return [];
