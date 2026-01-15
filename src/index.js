@@ -1558,7 +1558,7 @@ app.get("/getMessage", async (req, res) => {
     }
 
     const message = await getMessageFromDatabase(messageId);
-    if (!message) {
+    if (!message || message.length === 0) {
       return res.json({
         success: false,
         error: "Message not found",
@@ -1567,8 +1567,7 @@ app.get("/getMessage", async (req, res) => {
 
     return res.json({
       success: true,
-      message,
-      timestamp: moment().format("YYYY-MM-DD HH:mm:ss"),
+      data: message,
     });
   } catch (error) {
     console.error("Error fetching inbox messages:", error);
@@ -1724,23 +1723,17 @@ async function getSentFromDatabase(toNumber = "*", limit = 100) {
 }
 
 async function getMessageFromDatabase(messageId) {
-  let conn;
   try {
-    conn = await pool.getConnection();
-
     const query = `
       SELECT 
         *
       FROM ${DB_TABLE} 
       WHERE messageId = ?`;
-    const params = [messageId];
-    const rows = await conn.query(query, params);
-    return rows[0];
+    const [rows] = await pool.execute(query, [messageId]);
+    return rows.length > 0 ? rows[0] : null;
   } catch (err) {
     console.error("Database read error:", err);
     return [];
-  } finally {
-    if (conn) conn.release();
   }
 }
 
