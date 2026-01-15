@@ -19,6 +19,9 @@ const mariadb = require("mariadb");
 const { send } = require("process");
 
 const app = express();
+BigInt.prototype.toJSON = function () {
+  return this.toString();
+};
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -1724,13 +1727,20 @@ async function getSentFromDatabase(toNumber = "*", limit = 100) {
 
 async function getMessageFromDatabase(messageId) {
   try {
+    const cleanId = String(messageId).trim();
     const query = `
       SELECT 
         *
       FROM ${DB_TABLE} 
       WHERE messageId = ?`;
-    const [rows] = await pool.execute(query, [messageId]);
-    return rows.length > 0 ? rows[0] : null;
+    const [rows] = await pool.execute(query, [cleanId]);
+
+    if (Array.isArray(rows)) {
+      return rows.length > 0 ? rows[0] : null;
+    } else {
+      // Fallback jika library Anda mengembalikan object langsung
+      return rows ? rows : null;
+    }
   } catch (err) {
     console.error("Database read error:", err);
     return [];
